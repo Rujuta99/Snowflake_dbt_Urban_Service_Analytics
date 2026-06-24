@@ -1,0 +1,10 @@
+# Phases 1-2. We'll add dbt-snowflake, great-expectations, and
+# apache-airflow as we reach those phases.
+requests>=2.31
+python-dotenv>=1.0
+pytest>=8.0
+
+# Phase 2 -- silver layer. PySpark needs a Java runtime installed (JDK 11 or 17).
+# On macOS:  brew install openjdk@17   (then follow brew's PATH instructions)
+# Check with: java -version
+pyspark>=3.5

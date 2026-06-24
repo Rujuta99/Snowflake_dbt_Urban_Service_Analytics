@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: dim_date
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+  - name: dim_community_area
+    columns:
+      - name: community_area
+        tests: [unique, not_null]
+  - name: dim_service_type
+    columns:
+      - name: sr_type
+        tests: [unique, not_null]
+  - name: fct_service_requests
+    columns:
+      - name: sr_number
+        tests: [unique, not_null]
+      - name: community_area
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_community_area')
+                field: community_area
+              config:
+                severity: warn
+      - name: sr_type
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_service_type')
+                field: sr_type

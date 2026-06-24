@@ -1,0 +1,20 @@
+version: 2
+
+sources:
+  - name: raw
+    database: chi_311
+    schema: raw
+    tables:
+      - name: sr_311
+
+models:
+  - name: stg_sr_311
+    description: "Lightly cleaned 311 service requests from the raw layer."
+    columns:
+      - name: sr_number
+        tests: [unique, not_null]
+  - name: stg_census
+    description: "Per-community-area socioeconomic indicators (2008-2012)."
+    columns:
+      - name: community_area
+        tests: [unique, not_null]
