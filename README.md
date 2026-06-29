@@ -1,28 +1,38 @@
-# Chicago 311 Service Reliability Pipeline
+# Urban Service Analytics: Chicago 311
 
-An end-to-end data engineering pipeline that ingests Chicago 311 service requests,
-cleans them at scale with PySpark, models them into a star schema in Snowflake with
-dbt, validates data quality with Great Expectations, orchestrates everything with
-Apache Airflow, and surfaces a neighborhood **service-equity** analysis in a dashboard.
+An end-to-end data engineering pipeline that ingests Chicago 311 service
+requests, cleans them at scale with PySpark, validates them with Great
+Expectations, loads them into Snowflake, and models them into a star schema
+with dbt to analyze service equity across neighborhoods. Apache Airflow
+orchestrates the pipeline locally.
 
-**Core question:** do wealthier Chicago neighborhoods get their 311 requests resolved
-faster than lower-income ones, and does weather widen the gap?
+Core question: do lower-income Chicago neighborhoods wait longer for their
+311 service requests to be resolved than higher-income ones?
 
-## Architecture
+## Headline finding
 
-```
-Data sources        Chicago 311 (Socrata API)
-      |
-Bronze layer        raw JSON landed untouched
-      |             (PySpark: clean, dedupe, derive resolution_hours)
-Silver layer        cleaned & conformed Parquet
-      |             (load to Snowflake -> dbt models)
-Gold layer          star schema: fact_service_requests + dim_date / _neighborhood / _service_type
-      |             (Great Expectations validates before publish)
-Dashboard           neighborhood equity analysis
-```
+Across 157K requests from January 2024, the gap depends on the service. For
+weather and safety related requests, the lowest-income quartile of community
+areas waited substantially longer than the highest-income quartile (median
+resolution time):
 
-Apache Airflow orchestrates every stage end to end.
+| Service type       | Low-income median | High-income median | Gap   |
+|--------------------|-------------------|--------------------|-------|
+| Water on Street    | 100.9 hrs         | 55.2 hrs           | +83%  |
+| Ice & Snow Removal | 3.8 hrs           | 2.2 hrs            | +73%  |
+| Traffic Signal Out | 8.2 hrs           | 5.0 hrs            | +64%  |
+| Pothole in Street  | 71.8 hrs          | 53.8 hrs           | +34%  |
+
+A blended average across all service types showed no clean income gradient; the
+disparity only appears when comparing like-for-like service types. Caveats:
+single month of data (seasonal effects on winter services), and the income
+indicators are from the 2008-2012 census release.
+
+## Architecture (medallion)
+git add -A
+git status
+Apache Airflow orchestrates these steps end to end:
+ingest -> clean_silver -> validate -> load -> dbt build.
 
 ## Tech stack
 
@@ -30,79 +40,73 @@ Apache Airflow orchestrates every stage end to end.
 |----------------|-------------------------------|
 | Ingestion      | Python + Socrata SODA API     |
 | Transformation | PySpark                       |
-| Warehouse      | Snowflake                     |
-| Modeling       | dbt                           |
 | Data quality   | Great Expectations            |
-| Orchestration  | Apache Airflow                |
-| Dashboard      | Power BI / Streamlit          |
+| Warehouse      | Snowflake (key-pair auth)     |
+| Modeling       | dbt                           |
+| Orchestration  | Apache Airflow (Docker)       |
 
 ## Build status
 
-- [x] Phase 1 -- Ingestion
-- [x] **Phase 2 -- Silver layer (PySpark)** (this milestone)
-- [ ] Phase 3 -- Load to Snowflake
-- [ ] Phase 4 -- Gold layer (dbt)
-- [ ] Phase 5 -- Data quality (Great Expectations)
-- [ ] Phase 6 -- Orchestration (Airflow)
-- [ ] Phase 7 -- Dashboard + analysis
+- [x] Phase 1: Ingestion (Socrata API to bronze)
+- [x] Phase 2: Silver layer (PySpark cleaning)
+- [x] Phase 3: Load to Snowflake (key-pair auth)
+- [x] Phase 4: Gold layer (dbt star schema, tests, equity analysis)
+- [x] Phase 5: Data quality (Great Expectations gate)
+- [x] Phase 6: Orchestration (Airflow, local via SSHOperator)
+- [ ] Phase 7: Dashboard and write-up
 
 ## Setup
 
 ```bash
-# 1. Create and activate a virtual environment
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 2. Install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# 3. (Optional) copy the env template; not required to start
-cp .env.example .env
+cp .env.example .env                 # then fill in Snowflake credentials
 ```
 
-## Phase 1 -- Ingestion
+Snowflake uses key-pair authentication (it enforces MFA on password logins):
+generate a key, register the public key on your user, and point
+SNOWFLAKE_PRIVATE_KEY_PATH at the private key. See .env.example.
 
-Pull 311 records into the bronze layer (`data/bronze/sr_311/`).
+Great Expectations has dependencies that conflict with dbt, so it lives in its
+own environment:
 
 ```bash
-# Backfill a single month (run month by month for the full history)
-python -m src.ingest.ingest_311 --start 2024-01-01 --end 2024-02-01
-
-# Incremental: pull the last 3 days (what Airflow will run daily)
-python -m src.ingest.ingest_311 --incremental 3
+python -m venv .venv-gx
+.venv-gx/bin/pip install great-expectations pandas pyarrow
 ```
 
-Each run writes one newline-delimited JSON file. Bronze keeps the raw API
-response untouched -- all cleaning happens later in the silver layer.
+## Running the pipeline (manually)
 
-### Run the tests
+```bash
+# 1. Ingest one month into the bronze layer
+python -m src.ingest.ingest_311 --start 2024-01-01 --end 2024-02-01
+
+# 2. Clean into the silver layer (needs Java 11/17 for PySpark)
+python -m src.transform.clean_silver --input data/bronze/sr_311 --output data/silver/sr_311
+
+# 3. Validate the silver layer (quality gate)
+.venv-gx/bin/python -m src.quality.validate_silver --input data/silver/sr_311
+
+# 4. Run sql/setup_snowflake.sql once in Snowsight, then load the silver data
+python -m src.load.load_snowflake --input data/silver/sr_311
+
+# 5. Build and test the dbt models
+set -a; source .env; set +a
+dbt build --project-dir dbt --profiles-dir dbt
+```
+
+## Running the pipeline (orchestrated)
+
+Airflow runs the same steps in order. See airflow/README.md. The DAG triggers
+the steps on the host over SSH inside the project's virtual environments. This
+is a local-orchestration setup; in production these steps would run as
+containerized tasks (ECS / Kubernetes) or on managed Airflow.
+
+## Tests
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-The ingestion tests mock the API, so they run offline and verify pagination,
-the stop condition, and file writing without downloading anything.
-
-## Phase 2 -- Silver layer (PySpark)
-
-Clean the raw bronze data into a conformed, deduplicated Parquet dataset.
-
-**Prerequisite:** PySpark needs Java (JDK 11 or 17). Check with `java -version`.
-On macOS, if it's missing: `brew install openjdk@17`.
-
-```bash
-python -m src.transform.clean_silver \
-    --input  data/bronze/sr_311 \
-    --output data/silver/sr_311
-```
-
-What the job does:
-- parses ISO timestamps and casts numeric fields to real types
-- deduplicates on `sr_number`, keeping the most recently modified version
-- derives `resolution_hours`, nulling and flagging invalid (negative) values
-- flags rows with missing or out-of-Chicago geo coordinates
-- writes Parquet partitioned by `created_year` / `created_month`
-
-The silver tests run the real transform against a sample file covering each
-edge case (duplicate IDs, negative resolution time, blank fields, missing geo).
+## Project layout
