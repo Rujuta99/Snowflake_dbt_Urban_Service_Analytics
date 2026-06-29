@@ -29,8 +29,20 @@ single month of data (seasonal effects on winter services), and the income
 indicators are from the 2008-2012 census release.
 
 ## Architecture (medallion)
-git add -A
-git status
+
+```
+Chicago 311 (Socrata API)
+      |  ingest: raw JSON landed untouched
+Bronze
+      |  PySpark: clean, dedupe, derive resolution_hours, flag bad geo/time
+Silver (Parquet)
+      |  Great Expectations: validate before load (quality gate)
+      |  load to Snowflake raw schema
+Snowflake
+      |  dbt: staging views + star schema
+Gold: fct_service_requests + dim_date / dim_community_area / dim_service_type
+```
+
 Apache Airflow orchestrates these steps end to end:
 ingest -> clean_silver -> validate -> load -> dbt build.
 
@@ -41,19 +53,10 @@ ingest -> clean_silver -> validate -> load -> dbt build.
 | Ingestion      | Python + Socrata SODA API     |
 | Transformation | PySpark                       |
 | Data quality   | Great Expectations            |
-| Warehouse      | Snowflake (key-pair auth)     |
+| Warehouse      | Snowflake      |
 | Modeling       | dbt                           |
 | Orchestration  | Apache Airflow (Docker)       |
 
-## Build status
-
-- [x] Phase 1: Ingestion (Socrata API to bronze)
-- [x] Phase 2: Silver layer (PySpark cleaning)
-- [x] Phase 3: Load to Snowflake (key-pair auth)
-- [x] Phase 4: Gold layer (dbt star schema, tests, equity analysis)
-- [x] Phase 5: Data quality (Great Expectations gate)
-- [x] Phase 6: Orchestration (Airflow, local via SSHOperator)
-- [ ] Phase 7: Dashboard and write-up
 
 ## Setup
 
@@ -109,4 +112,16 @@ containerized tasks (ECS / Kubernetes) or on managed Airflow.
 python -m pytest tests/ -v
 ```
 
+Ingestion tests mock the API (offline); silver tests run the real PySpark
+transform against a sample covering each edge case.
+
 ## Project layout
+
+```
+src/        ingestion, PySpark cleaning, GX validation, Snowflake loader
+tests/      pytest suite
+sql/        Snowflake setup DDL
+dbt/        staging + marts models, seeds, tests
+airflow/    Docker-based Airflow DAG (orchestration)
+data/       bronze / silver (gitignored)
+```
