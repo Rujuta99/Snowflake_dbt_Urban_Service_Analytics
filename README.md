@@ -79,7 +79,7 @@ python -m venv .venv-gx
 .venv-gx/bin/pip install great-expectations pandas pyarrow
 ```
 
-## Running the pipeline (manually)
+## Running the pipeline 
 
 ```bash
 # 1. Ingest one month into the bronze layer
@@ -99,7 +99,7 @@ set -a; source .env; set +a
 dbt build --project-dir dbt --profiles-dir dbt
 ```
 
-## Running the pipeline (orchestrated)
+## Running the pipeline 
 
 Airflow runs the same steps in order. See airflow/README.md. The DAG triggers
 the steps on the host over SSH inside the project's virtual environments. This
